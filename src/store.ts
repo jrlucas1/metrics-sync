@@ -13,6 +13,12 @@ export interface StoredPost {
   fetchedAt: string;
 }
 
+// Posição de um post na listagem, que é ordenada por (published_at, post_id).
+export interface PostKey {
+  publishedAt: string;
+  postId: string;
+}
+
 const SCHEMA = `
   CREATE TABLE IF NOT EXISTS connections (
     id TEXT PRIMARY KEY,
@@ -31,6 +37,8 @@ const SCHEMA = `
     fetched_at TEXT NOT NULL,
     PRIMARY KEY (connection_id, post_id)
   );
+  CREATE INDEX IF NOT EXISTS post_metrics_listing
+    ON post_metrics (connection_id, published_at, post_id);
 `;
 
 // Uma linha por post. O snapshot que chega substitui os números (nunca soma)
@@ -102,17 +110,24 @@ export class Store {
     return saveAll();
   }
 
-  listPosts(connectionId: string): StoredPost[] {
+  // Sem limit devolve todos. Com after, devolve só os posts depois daquela posição.
+  listPosts(connectionId: string, page: { limit?: number; after?: PostKey } = {}): StoredPost[] {
+    const select = `
+      SELECT post_id AS postId, published_at AS publishedAt,
+             views, likes, comments, shares,
+             measured_at AS measuredAt, fetched_at AS fetchedAt
+      FROM post_metrics
+      WHERE connection_id = ?`;
+    const order = 'ORDER BY published_at, post_id LIMIT ?';
+    // No SQLite, LIMIT -1 é sem limite.
+    const limit = page.limit ?? -1;
+
+    if (!page.after) {
+      return this.db.prepare(`${select} ${order}`).all(connectionId, limit) as StoredPost[];
+    }
     return this.db
-      .prepare(
-        `SELECT post_id AS postId, published_at AS publishedAt,
-                views, likes, comments, shares,
-                measured_at AS measuredAt, fetched_at AS fetchedAt
-         FROM post_metrics
-         WHERE connection_id = ?
-         ORDER BY published_at, post_id`,
-      )
-      .all(connectionId) as StoredPost[];
+      .prepare(`${select} AND (published_at, post_id) > (?, ?) ${order}`)
+      .all(connectionId, page.after.publishedAt, page.after.postId, limit) as StoredPost[];
   }
 
   close(): void {

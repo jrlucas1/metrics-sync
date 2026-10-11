@@ -27,9 +27,11 @@ curl localhost:3000/connections/<id>/posts
 | --- | --- |
 | `POST /connections` | Registra a conexão (`platform`, `accessToken`) e devolve o `id`. |
 | `POST /connections/:id/sync` | Sincroniza os posts publicados em `[from, to)` e devolve o resultado. |
-| `GET /connections/:id/posts` | Lista os posts com os números, `measuredAt` e `fetchedAt`. |
+| `GET /connections/:id/posts` | Lista os posts com os números, `measuredAt` e `fetchedAt`, em páginas. |
 
 O sync roda dentro da requisição. A resposta é 200 quando conclui, 502 quando o provedor falha e 503 com `Retry-After` quando o provedor limitou a taxa por mais tempo do que o serviço aceita esperar. O corpo traz `status`, `providerCalls`, `postsReceived`, `postsSaved`, o erro e, no caso de limite de taxa, `retryAt`.
+
+A listagem aceita `limit` (padrão 50, máximo 200) e `cursor`. Os posts vêm ordenados por data de publicação e, no empate, por id. Quando existe próxima página a resposta traz `nextCursor`, que guarda a posição do último post devolvido. Um post que entra no banco entre uma página e outra não desloca as seguintes, e cada página é uma leitura direta no índice `(connection_id, published_at, post_id)`.
 
 ## Idempotência
 

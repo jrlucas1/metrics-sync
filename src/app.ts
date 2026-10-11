@@ -1,7 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import type { Clock } from './clock';
 import { PLATFORMS, type MetricsProvider, type Platform } from './provider/metrics-provider';
-import type { Store } from './store';
+import type { PostKey, Store } from './store';
 import { SyncService, type SyncConfig } from './sync-service';
 
 export interface AppDeps {
@@ -9,6 +9,23 @@ export interface AppDeps {
   provider: MetricsProvider;
   clock: Clock;
   config?: SyncConfig;
+}
+
+const DEFAULT_PAGE_SIZE = 50;
+const MAX_PAGE_SIZE = 200;
+
+function encodeCursor({ publishedAt, postId }: PostKey): string {
+  return Buffer.from(JSON.stringify([publishedAt, postId])).toString('base64url');
+}
+
+function decodeCursor(cursor: string): PostKey | undefined {
+  try {
+    const [publishedAt, postId]: unknown[] = JSON.parse(Buffer.from(cursor, 'base64url').toString());
+    if (typeof publishedAt === 'string' && typeof postId === 'string') return { publishedAt, postId };
+  } catch {
+    // cursor ilegível cai no undefined abaixo
+  }
+  return undefined;
 }
 
 export function buildApp({ store, provider, clock, config }: AppDeps): FastifyInstance {
@@ -71,12 +88,36 @@ export function buildApp({ store, provider, clock, config }: AppDeps): FastifyIn
     },
   );
 
-  app.get<{ Params: { id: string } }>('/connections/:id/posts', async (request, reply) => {
-    if (!store.findConnection(request.params.id)) {
-      return reply.code(404).send({ error: 'conexão não encontrada' });
-    }
-    return { posts: store.listPosts(request.params.id) };
-  });
+  // nextCursor só vem na resposta quando existe próxima página.
+  app.get<{ Params: { id: string }; Querystring: { limit: number; cursor?: string } }>(
+    '/connections/:id/posts',
+    {
+      schema: {
+        querystring: {
+          type: 'object',
+          properties: {
+            limit: { type: 'integer', minimum: 1, maximum: MAX_PAGE_SIZE, default: DEFAULT_PAGE_SIZE },
+            cursor: { type: 'string' },
+          },
+        },
+      },
+    },
+    async (request, reply) => {
+      if (!store.findConnection(request.params.id)) {
+        return reply.code(404).send({ error: 'conexão não encontrada' });
+      }
+      const { limit, cursor } = request.query;
+      const after = cursor === undefined ? undefined : decodeCursor(cursor);
+      if (cursor !== undefined && !after) return reply.code(400).send({ error: 'cursor inválido' });
+
+      // Busca um a mais para saber se existe próxima página.
+      const rows = store.listPosts(request.params.id, { limit: limit + 1, after });
+      const posts = rows.slice(0, limit);
+      const last = posts.at(-1);
+      if (rows.length > limit && last) return { posts, nextCursor: encodeCursor(last) };
+      return { posts };
+    },
+  );
 
   return app;
 }
