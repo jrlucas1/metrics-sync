@@ -75,6 +75,7 @@ Os testes usam um relógio falso no lugar de [src/clock.ts](src/clock.ts). Os te
 - Trava contra dois syncs da mesma conexão ao mesmo tempo.
 - Retomada pelo cursor depois de uma falha.
 - Jitter no backoff e limite de taxa compartilhado entre conexões.
+- Autenticação de quem chama a API. Hoje quem sabe o `id` da conexão pode sincronizar e listar.
 - OAuth e criptografia do token.
 - Formato próprio de cada rede.
 
