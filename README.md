@@ -83,4 +83,4 @@ Os testes usam um relógio falso no lugar de [src/clock.ts](src/clock.ts). Os te
 
 O Claude Code escreveu o código, os testes e este README.
 
-Eu defini o desenho: a stack, o comportamento do 429 acima do teto, o corte de escopo e a paginação da listagem. Eu li trechos de `src/store.ts`, `src/clock.ts` e `src/sync-service.ts` e pedi mudanças. Eu pedi o `EXPLAIN` das queries e os testes de carga. Não revisei o resto do código linha a linha.
+Eu defini o desenho: a stack, o comportamento do 429 acima do teto, o corte de escopo e a paginação da listagem. Eu li as queries de `src/store.ts`, o `src/clock.ts`, o laço de retry de `src/sync-service.ts`, o cursor em `src/app.ts` e o teste de 429, e pedi mudanças. Eu pedi o `EXPLAIN` das queries e os testes de carga. Não revisei o resto do código linha a linha.
