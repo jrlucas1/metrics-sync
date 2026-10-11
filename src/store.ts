@@ -69,6 +69,8 @@ export class Store {
 
   constructor(path = ':memory:') {
     this.db = new Database(path);
+    // WAL deixa o commit de cada página mais barato quando o banco é um arquivo.
+    this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
     this.db.exec(SCHEMA);
   }
