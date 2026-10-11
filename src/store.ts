@@ -9,9 +9,7 @@ export interface StoredPost {
   likes: number;
   comments: number;
   shares: number;
-  // Quando o provedor mediu os números.
   measuredAt: string;
-  // Quando este serviço buscou os números.
   fetchedAt: string;
 }
 
