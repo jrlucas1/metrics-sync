@@ -106,27 +106,39 @@ export class SyncService {
     cursor: string | null,
     result: SyncResult,
   ): Promise<PostsPage> {
-    for (let attempt = 1; ; attempt++) {
-      try {
-        result.providerCalls++;
-        return await this.provider.fetchPosts(connection, window, cursor);
-      } catch (error) {
-        if (!(error instanceof ProviderError)) throw error;
-        if (!TRANSIENT.includes(error.kind)) throw new SyncStopped(error);
+    for (let attempt = 1; attempt <= this.config.maxAttempts; attempt++) {
+      result.providerCalls++;
+      const outcome = await this.callProvider(connection, window, cursor);
+      if (!(outcome instanceof ProviderError)) return outcome;
 
-        const waitMs = this.waitBeforeRetry(error, attempt);
-        const retryAt =
-          error.kind === 'rate_limited'
-            ? new Date(this.clock.now().getTime() + waitMs)
-            : undefined;
-        if (attempt >= this.config.maxAttempts) throw new SyncStopped(error, retryAt);
-        // Prazo maior que o teto: esperar menos só gastaria uma tentativa em
-        // outro 429, então o sync para e devolve o prazo.
-        if (error.kind === 'rate_limited' && waitMs > this.config.maxRetryAfterMs) {
-          throw new SyncStopped(error, retryAt);
-        }
-        await this.clock.sleep(waitMs);
-      }
+      const error = outcome;
+      const isRateLimit = error.kind === 'rate_limited';
+      const waitMs = this.waitBeforeRetry(error, attempt);
+      const retryAt = isRateLimit ? new Date(this.clock.now().getTime() + waitMs) : undefined;
+
+      const isLastAttempt = attempt === this.config.maxAttempts;
+      // Esperar menos que o prazo do provedor só gastaria uma tentativa em outro 429.
+      const waitIsTooLong = isRateLimit && waitMs > this.config.maxRetryAfterMs;
+      if (isLastAttempt || waitIsTooLong) throw new SyncStopped(error, retryAt);
+
+      await this.clock.sleep(waitMs);
+    }
+    throw new Error('maxAttempts precisa ser pelo menos 1');
+  }
+
+  // Devolve a página. Se o erro é transitório, devolve o erro para quem chamou
+  // decidir se tenta de novo. Qualquer outro erro encerra o sync.
+  private async callProvider(
+    connection: Connection,
+    window: SyncWindow,
+    cursor: string | null,
+  ): Promise<PostsPage | ProviderError> {
+    try {
+      return await this.provider.fetchPosts(connection, window, cursor);
+    } catch (error) {
+      if (!(error instanceof ProviderError)) throw error;
+      if (!TRANSIENT.includes(error.kind)) throw new SyncStopped(error);
+      return error;
     }
   }
 
