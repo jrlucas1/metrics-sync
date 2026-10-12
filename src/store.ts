@@ -13,6 +13,8 @@ export interface StoredPost {
   fetchedAt: string;
 }
 
+export type StoredSnapshot = Omit<StoredPost, 'postId' | 'publishedAt'>;
+
 // Posição de um post na listagem, que é ordenada por (published_at, post_id).
 export interface PostKey {
   publishedAt: string;
@@ -39,6 +41,18 @@ const SCHEMA = `
   );
   CREATE INDEX IF NOT EXISTS post_metrics_listing
     ON post_metrics (connection_id, published_at, post_id);
+  CREATE TABLE IF NOT EXISTS post_snapshots (
+    connection_id TEXT NOT NULL,
+    post_id TEXT NOT NULL,
+    measured_at TEXT NOT NULL,
+    views INTEGER NOT NULL,
+    likes INTEGER NOT NULL,
+    comments INTEGER NOT NULL,
+    shares INTEGER NOT NULL,
+    fetched_at TEXT NOT NULL,
+    PRIMARY KEY (connection_id, post_id, measured_at),
+    FOREIGN KEY (connection_id, post_id) REFERENCES post_metrics (connection_id, post_id)
+  );
 `;
 
 // Uma linha por post. O snapshot que chega substitui os números (nunca soma)
@@ -62,6 +76,26 @@ const UPSERT_SNAPSHOT = `
     measured_at = excluded.measured_at,
     fetched_at = excluded.fetched_at
   WHERE excluded.measured_at >= post_metrics.measured_at
+`;
+
+// Um ponto por medição do post. Medição atrasada também entra: ela não muda o
+// número atual, mas faz parte da série. Medição repetida fica com o último
+// recebido, igual ao atual.
+const UPSERT_HISTORY = `
+  INSERT INTO post_snapshots (
+    connection_id, post_id, measured_at,
+    views, likes, comments, shares, fetched_at
+  )
+  VALUES (
+    @connectionId, @postId, @measuredAt,
+    @views, @likes, @comments, @shares, @fetchedAt
+  )
+  ON CONFLICT (connection_id, post_id, measured_at) DO UPDATE SET
+    views = excluded.views,
+    likes = excluded.likes,
+    comments = excluded.comments,
+    shares = excluded.shares,
+    fetched_at = excluded.fetched_at
 `;
 
 export class Store {
@@ -92,10 +126,11 @@ export class Store {
   // Grava a página numa transação e devolve quantos snapshots entraram.
   saveSnapshots(connectionId: string, snapshots: PostSnapshot[], fetchedAt: Date): number {
     const upsert = this.db.prepare(UPSERT_SNAPSHOT);
+    const upsertHistory = this.db.prepare(UPSERT_HISTORY);
     const saveAll = this.db.transaction(() => {
       let saved = 0;
       for (const snapshot of snapshots) {
-        saved += upsert.run({
+        const row = {
           connectionId,
           postId: snapshot.postId,
           publishedAt: snapshot.publishedAt.toISOString(),
@@ -105,11 +140,39 @@ export class Store {
           shares: snapshot.shares,
           measuredAt: snapshot.measuredAt.toISOString(),
           fetchedAt: fetchedAt.toISOString(),
-        }).changes;
+        };
+        saved += upsert.run(row).changes;
+        const { publishedAt: _publishedAt, ...point } = row;
+        upsertHistory.run(point);
       }
       return saved;
     });
     return saveAll();
+  }
+
+  findPost(connectionId: string, postId: string): StoredPost | undefined {
+    return this.db
+      .prepare(
+        `SELECT post_id AS postId, published_at AS publishedAt,
+                views, likes, comments, shares,
+                measured_at AS measuredAt, fetched_at AS fetchedAt
+         FROM post_metrics
+         WHERE connection_id = ? AND post_id = ?`,
+      )
+      .get(connectionId, postId) as StoredPost | undefined;
+  }
+
+  // A série do post, da medição mais antiga para a mais nova.
+  listSnapshots(connectionId: string, postId: string): StoredSnapshot[] {
+    return this.db
+      .prepare(
+        `SELECT measured_at AS measuredAt, fetched_at AS fetchedAt,
+                views, likes, comments, shares
+         FROM post_snapshots
+         WHERE connection_id = ? AND post_id = ?
+         ORDER BY measured_at`,
+      )
+      .all(connectionId, postId) as StoredSnapshot[];
   }
 
   // Sem limit devolve todos. Com after, devolve só os posts depois daquela posição.

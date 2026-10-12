@@ -119,5 +119,19 @@ export function buildApp({ store, provider, clock, config }: AppDeps): FastifyIn
     },
   );
 
+  // O número atual do post e todas as medições que já chegaram dele.
+  app.get<{ Params: { id: string; postId: string } }>(
+    '/connections/:id/posts/:postId/snapshots',
+    async (request, reply) => {
+      const { id, postId } = request.params;
+      if (!store.findConnection(id)) {
+        return reply.code(404).send({ error: 'conexão não encontrada' });
+      }
+      const current = store.findPost(id, postId);
+      if (!current) return reply.code(404).send({ error: 'post não encontrado' });
+      return { current, snapshots: store.listSnapshots(id, postId) };
+    },
+  );
+
   return app;
 }
