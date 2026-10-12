@@ -77,6 +77,7 @@ export function buildApp({ store, provider, clock, config }: AppDeps): FastifyIn
       }
 
       const result = await syncService.sync(connection, window);
+      if (result.status === 'already_running') return reply.code(409).send(result);
       if (result.status === 'rate_limited') {
         if (result.retryAt) {
           const seconds = (Date.parse(result.retryAt) - Date.parse(result.finishedAt)) / 1000;
@@ -116,6 +117,20 @@ export function buildApp({ store, provider, clock, config }: AppDeps): FastifyIn
       const last = posts.at(-1);
       if (rows.length > limit && last) return { posts, nextCursor: encodeCursor(last) };
       return { posts };
+    },
+  );
+
+  // O número atual do post e todas as medições que já chegaram dele.
+  app.get<{ Params: { id: string; postId: string } }>(
+    '/connections/:id/posts/:postId/snapshots',
+    async (request, reply) => {
+      const { id, postId } = request.params;
+      if (!store.findConnection(id)) {
+        return reply.code(404).send({ error: 'conexão não encontrada' });
+      }
+      const current = store.findPost(id, postId);
+      if (!current) return reply.code(404).send({ error: 'post não encontrado' });
+      return { current, snapshots: store.listSnapshots(id, postId) };
     },
   );
 

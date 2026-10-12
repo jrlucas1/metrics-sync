@@ -27,7 +27,8 @@ export const defaultSyncConfig: SyncConfig = {
 };
 
 export interface SyncResult {
-  status: 'completed' | 'failed' | 'rate_limited';
+  // already_running: outro sync da mesma conexão está em andamento e este não rodou.
+  status: 'completed' | 'failed' | 'rate_limited' | 'already_running';
   startedAt: string;
   finishedAt: string;
   providerCalls: number;
@@ -52,6 +53,9 @@ class SyncStopped extends Error {
 }
 
 export class SyncService {
+  // Conexões com sync em andamento. Fica em memória: vale para um processo só.
+  private readonly running = new Set<string>();
+
   constructor(
     private readonly provider: MetricsProvider,
     private readonly store: Store,
@@ -68,6 +72,32 @@ export class SyncService {
       postsReceived: 0,
       postsSaved: 0,
     };
+
+    if (this.running.has(connection.id)) {
+      result.status = 'already_running';
+    } else {
+      this.running.add(connection.id);
+      try {
+        await this.run(connection, window, result);
+      } finally {
+        this.running.delete(connection.id);
+      }
+    }
+
+    result.finishedAt = this.clock.now().toISOString();
+    return result;
+  }
+
+  private async run(connection: Connection, window: SyncWindow, result: SyncResult): Promise<void> {
+    // O prazo do último 429 fica no banco. Antes dele o sync nem chama o
+    // provedor; no instante do prazo já pode chamar.
+    const cooldown = this.store.findCooldown(connection.id);
+    if (cooldown && this.clock.now() < cooldown) {
+      result.status = 'rate_limited';
+      result.error = { kind: 'rate_limited', message: 'a conexão está no prazo de espera do provedor' };
+      result.retryAt = cooldown.toISOString();
+      return;
+    }
 
     try {
       const seenCursors = new Set<string>();
@@ -93,11 +123,11 @@ export class SyncService {
       if (!(error instanceof SyncStopped)) throw error;
       result.status = error.reason.kind === 'rate_limited' ? 'rate_limited' : 'failed';
       result.error = { kind: error.reason.kind, message: error.reason.message };
-      if (error.retryAt) result.retryAt = error.retryAt.toISOString();
+      if (error.retryAt) {
+        result.retryAt = error.retryAt.toISOString();
+        this.store.saveCooldown(connection.id, error.retryAt);
+      }
     }
-
-    result.finishedAt = this.clock.now().toISOString();
-    return result;
   }
 
   private async fetchPage(
