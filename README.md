@@ -28,8 +28,9 @@ curl localhost:3000/connections/<id>/posts
 | `POST /connections` | Registra a conexão e devolve o `id`. |
 | `POST /connections/:id/sync` | Sincroniza os posts publicados em `[from, to)`. |
 | `GET /connections/:id/posts` | Lista os posts em páginas. |
+| `GET /connections/:id/posts/:postId/snapshots` | Devolve o número atual do post e a série de medições. |
 
-O sync roda dentro da requisição. A resposta é 200 quando o sync termina, 502 quando o provedor falha e 503 com `Retry-After` quando o provedor limita a taxa.
+O sync roda dentro da requisição. A resposta é 200 quando o sync termina, 502 quando o provedor falha, 503 com `Retry-After` quando o provedor limita a taxa e 409 quando a conexão já tem um sync em andamento.
 
 A listagem aceita `limit` (padrão 50, máximo 200) e `cursor`. A resposta traz `nextCursor` quando existe outra página.
 
@@ -71,8 +72,7 @@ Os testes usam um relógio falso no lugar de [src/clock.ts](src/clock.ts). Os te
 ## Fora do escopo
 
 - Sync em segundo plano. Hoje a requisição espera o sync terminar.
-- Histórico de snapshots. O serviço guarda só o número atual.
-- Trava contra dois syncs da mesma conexão ao mesmo tempo.
+- Trava de sync entre processos. A trava atual fica em memória e vale para um processo.
 - Retomada pelo cursor depois de uma falha.
 - Jitter no backoff e limite de taxa compartilhado entre conexões.
 - Autenticação de quem chama a API. Hoje quem sabe o `id` da conexão pode sincronizar e listar.
