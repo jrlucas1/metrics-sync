@@ -77,6 +77,7 @@ export function buildApp({ store, provider, clock, config }: AppDeps): FastifyIn
       }
 
       const result = await syncService.sync(connection, window);
+      if (result.status === 'already_running') return reply.code(409).send(result);
       if (result.status === 'rate_limited') {
         if (result.retryAt) {
           const seconds = (Date.parse(result.retryAt) - Date.parse(result.finishedAt)) / 1000;

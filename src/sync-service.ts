@@ -27,7 +27,8 @@ export const defaultSyncConfig: SyncConfig = {
 };
 
 export interface SyncResult {
-  status: 'completed' | 'failed' | 'rate_limited';
+  // already_running: outro sync da mesma conexão está em andamento e este não rodou.
+  status: 'completed' | 'failed' | 'rate_limited' | 'already_running';
   startedAt: string;
   finishedAt: string;
   providerCalls: number;
@@ -52,6 +53,9 @@ class SyncStopped extends Error {
 }
 
 export class SyncService {
+  // Conexões com sync em andamento. Fica em memória: vale para um processo só.
+  private readonly running = new Set<string>();
+
   constructor(
     private readonly provider: MetricsProvider,
     private readonly store: Store,
@@ -69,6 +73,22 @@ export class SyncService {
       postsSaved: 0,
     };
 
+    if (this.running.has(connection.id)) {
+      result.status = 'already_running';
+    } else {
+      this.running.add(connection.id);
+      try {
+        await this.run(connection, window, result);
+      } finally {
+        this.running.delete(connection.id);
+      }
+    }
+
+    result.finishedAt = this.clock.now().toISOString();
+    return result;
+  }
+
+  private async run(connection: Connection, window: SyncWindow, result: SyncResult): Promise<void> {
     try {
       const seenCursors = new Set<string>();
       let cursor: string | null = null;
@@ -95,9 +115,6 @@ export class SyncService {
       result.error = { kind: error.reason.kind, message: error.reason.message };
       if (error.retryAt) result.retryAt = error.retryAt.toISOString();
     }
-
-    result.finishedAt = this.clock.now().toISOString();
-    return result;
   }
 
   private async fetchPage(
