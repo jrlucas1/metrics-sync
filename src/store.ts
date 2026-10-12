@@ -53,6 +53,10 @@ const SCHEMA = `
     PRIMARY KEY (connection_id, post_id, measured_at),
     FOREIGN KEY (connection_id, post_id) REFERENCES post_metrics (connection_id, post_id)
   );
+  CREATE TABLE IF NOT EXISTS sync_cooldowns (
+    connection_id TEXT PRIMARY KEY REFERENCES connections (id),
+    retry_at TEXT NOT NULL
+  );
 `;
 
 // Uma linha por post. O snapshot que chega substitui os números (nunca soma)
@@ -193,6 +197,24 @@ export class Store {
     return this.db
       .prepare(`${select} AND (published_at, post_id) > (?, ?) ${order}`)
       .all(connectionId, page.after.publishedAt, page.after.postId, limit) as StoredPost[];
+  }
+
+  // Guarda até quando o provedor pediu para não ser chamado nesta conexão.
+  // Um prazo novo troca o anterior.
+  saveCooldown(connectionId: string, retryAt: Date): void {
+    this.db
+      .prepare(
+        `INSERT INTO sync_cooldowns (connection_id, retry_at) VALUES (?, ?)
+         ON CONFLICT (connection_id) DO UPDATE SET retry_at = excluded.retry_at`,
+      )
+      .run(connectionId, retryAt.toISOString());
+  }
+
+  findCooldown(connectionId: string): Date | undefined {
+    const row = this.db
+      .prepare('SELECT retry_at AS retryAt FROM sync_cooldowns WHERE connection_id = ?')
+      .get(connectionId) as { retryAt: string } | undefined;
+    return row && new Date(row.retryAt);
   }
 
   close(): void {

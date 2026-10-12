@@ -89,6 +89,16 @@ export class SyncService {
   }
 
   private async run(connection: Connection, window: SyncWindow, result: SyncResult): Promise<void> {
+    // O prazo do último 429 fica no banco. Antes dele o sync nem chama o
+    // provedor; no instante do prazo já pode chamar.
+    const cooldown = this.store.findCooldown(connection.id);
+    if (cooldown && this.clock.now() < cooldown) {
+      result.status = 'rate_limited';
+      result.error = { kind: 'rate_limited', message: 'a conexão está no prazo de espera do provedor' };
+      result.retryAt = cooldown.toISOString();
+      return;
+    }
+
     try {
       const seenCursors = new Set<string>();
       let cursor: string | null = null;
@@ -113,7 +123,10 @@ export class SyncService {
       if (!(error instanceof SyncStopped)) throw error;
       result.status = error.reason.kind === 'rate_limited' ? 'rate_limited' : 'failed';
       result.error = { kind: error.reason.kind, message: error.reason.message };
-      if (error.retryAt) result.retryAt = error.retryAt.toISOString();
+      if (error.retryAt) {
+        result.retryAt = error.retryAt.toISOString();
+        this.store.saveCooldown(connection.id, error.retryAt);
+      }
     }
   }
 
